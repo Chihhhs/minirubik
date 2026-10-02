@@ -1,0 +1,8 @@
+# Build outputs: everything except sources, scripts and this file.
+*
+!*/
+!*.c
+!*.s
+!*.sh
+!Makefile
+!.gitignore
