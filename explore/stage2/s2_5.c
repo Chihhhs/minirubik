@@ -1,6 +1,7 @@
-// S2-4: IDA* with a finer heuristic table, index = p * K + otab[o].
-// Copied from s2_3.c; the heuristic is now computed in one place, h_of().
+// S2-5: gate H3. Run the S2-4 IDA* on every state and check that the
+// returned length equals the exact BFS distance. Search code is s2_4.c.
 #include "common.h"
+#include <time.h>
 
 /* ---------- heuristic tables (from s2_2.c) ---------- */
 static uint8_t pdist[5040];
@@ -174,34 +175,31 @@ int main(void)
     }
     printf("H1: h > depth in %d states (expect 0)\n", bad);
 
-    // S2-3 measurement, unchanged: worst distance-11 state with the new h
-
-    uint64_t num =0,sum =0,maxc =0, maxr =0;
-    for(int r =0;r<STATES;r++){
-        if(depth[r] != 11) continue;
-        count =0;
+    // H3: every state, solution length == exact distance
+    clock_t t0 = clock();
+    uint64_t total_nodes = 0, maxc = 0;
+    uint32_t wrong = 0, maxr = 0;
+    for (uint32_t r = 0; r < STATES; r++) {
+        count = 0;
         int len = inter_deep_dfs(r);
-        if(len != 11) printf("error state: %d,%d \n", r, len);
-        num++, sum += count;
-        if(count > maxc){
+        total_nodes += count;
+        if (count > maxc) {
             maxc = count;
             maxr = r;
         }
+        if (len != depth[r]) {
+            if (wrong < 10)
+                printf("H3 FAIL: rank %u depth %d got %d\n", r, depth[r], len);
+            wrong++;
+        }
+        if ((r + 1) % 500000 == 0)
+            printf("  %u / %u states, %.1f s\n", r + 1, STATES,
+                   (double) (clock() - t0) / CLOCKS_PER_SEC);
     }
-    printf("num=%llu, maxc=%llu, maxr=%llu, sum/num= %.2f\n", num, maxc, maxr, (double) sum/num);
-
-    // Reported vector from the assignment
-    state_t s;
-    if (!parse_state("21345671111111", &s)) {
-        printf("parse failed\n");
-        return 1;
-    }
-
-    int r = rank_state(&s);
-    count = 0;
-    uint8_t len = inter_deep_dfs(r);
-    printf("21345671111111: rank %u, depth %d, found %d, nodes %llu\n",
-           r, depth[r], len, (unsigned long long) count);
-
-    return 0;
+    double secs = (double) (clock() - t0) / CLOCKS_PER_SEC;
+    printf("H3: %u / %u states wrong (expect 0)\n", wrong, STATES);
+    printf("time %.1f s, total nodes %llu, avg %.1f, max %llu (rank %u)\n",
+           secs, (unsigned long long) total_nodes,
+           (double) total_nodes / STATES, (unsigned long long) maxc, maxr);
+    return wrong != 0;
 }
