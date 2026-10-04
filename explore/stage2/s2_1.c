@@ -42,7 +42,7 @@ int main(void)
     build_depth();
 
     // test case
-    uint32_t tc[6];
+    uint32_t tc[6]={0};
     for(int i = 0; i < STATES; i++){
         if(!tc[0] && depth[i]==1) tc[0]=i;
         if(!tc[1] && depth[i]==3) tc[1]=i;
