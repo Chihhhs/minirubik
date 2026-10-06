@@ -1,7 +1,7 @@
 /* Shared IDA* search: the SAME file is compiled by the host harness
  * (s3_ida.c, H3 + node counts) and the RV32I build (rv_ida.c).
  * Needs the tables pmove, omove, big, otab, odist (tables.h) in scope.
- * v0: s2_6.c dls_iter/ida_iter copied unchanged (m / 3, m % 3 left in).
+ * v0 = s2_6.c dls_iter/ida_iter; v1 = face/turn counters (see dls_iter).
  * The RV32I link fails if any variable *, /, % is left (__divsi3...).
  * After each change: node counts must stay 125,651 / 40,526 and H3 = 0.
  */
@@ -19,63 +19,79 @@ static uint64_t ida_nodes;
 #define COUNT() ((void) 0)
 #endif
 
-static uint16_t P[MAXD], O[MAXD];
-static int8_t   F[MAXD];
-static uint8_t  M[MAXD];
-static uint8_t  path[MAXD];     /* solution moves 0..8 */
+static uint16_t P[MAXD], O[MAXD];   /* parent state at depth g */
+static int8_t   F[MAXD];            /* face of the move into depth g (-1 at root) */
+static uint8_t  CF[MAXD];           /* face being tried at depth g (3 = done) */
+static uint8_t  CT[MAXD];           /* quarter turns done on that face (0..3) */
+static uint16_t CP[MAXD], CO[MAXD]; /* state after CT turns: chained turns */
+static uint8_t  path[MAXD];         /* solution moves 0..8 */
 
 static inline int h_of(int p, int o)
 {
-    int tmp = big[p * K + otab[o]];
+    int tmp = big[p * K + otab[o]];                 /* *9: gcc -> shift+add */
     return tmp > odist[o] ? tmp : odist[o];
 }
 
-static void move_po(int p, int o, int m, int *np, int *no)
+/* Start trying moves at depth g from its parent state. */
+static inline void level_init(int g)
 {
-    int f = m / 3;
-    for (int t = 0; t <= m % 3; t++) {
-        p = pmove[f * 5040 + p];                     /* tables.h is flat */
-        o = omove[f * 729 + o];
-    }
-    *np = p;
-    *no = o;
+    CF[g] = 0;
+    CT[g] = 0;
+    CP[g] = P[g];
+    CO[g] = O[g];
 }
 
+/* v1 (AI-written, 10-06): m = 0..8 split into face CF[g] and turn CT[g],
+ * so no / or %; turns on one face are chained from CP/CO instead of
+ * re-applied from P/O. Same move order as v0 -> same node counts. */
 static int dls_iter(int p0, int o0, int bound, int *len)
 {
     int g = 0;
-    P[0] = p0; O[0] = o0; F[0] = -1; M[0] = 0;
+    P[0] = p0; O[0] = o0; F[0] = -1;
+    level_init(0);
 
     COUNT();
     if (p0 == 0 && o0 == 0) { *len = 0; return 1; }
     if (h_of(p0, o0) > bound) return 0;
 
     for (;;) {
-        if (M[g] == 9) {
+        /* Face finished (3 turns) or same face as the last move: next face. */
+        if (CT[g] == 3 || CF[g] == F[g]) {
+            CF[g]++;
+            CT[g] = 0;
+            CP[g] = P[g];
+            CO[g] = O[g];
+            continue;
+        }
+        /* All 3 faces tried: back up one level. */
+        if (CF[g] == 3) {
             if (g == 0) return 0;
             g--;
             continue;
         }
-        int m = M[g]++;
-        if (m / 3 == F[g]) continue;
 
-        int np, no;
-        move_po(P[g], O[g], m, &np, &no);
+        /* One more quarter turn of face CF[g] on the chained state. */
+        int f = CF[g];
+        int np = pmove[f * 5040 + CP[g]];            /* const *: shift+add */
+        int no = omove[f * 729 + CO[g]];
+        CP[g] = np;
+        CO[g] = no;
+        CT[g]++;
         COUNT();
 
         if (np == 0 && no == 0) {
-            path[g] = m;
+            path[g] = f * 3 + CT[g] - 1;
             *len = g + 1;
             return 1;
         }
-        if (g + 1 + h_of(np, no) > bound) continue;
+        if (g + 1 + h_of(np, no) > bound) continue;  /* next turn chains */
 
-        path[g] = m;
+        path[g] = f * 3 + CT[g] - 1;
         g++;
         P[g] = np;
         O[g] = no;
-        F[g] = m / 3;
-        M[g] = 0;
+        F[g] = f;
+        level_init(g);
     }
 }
 
