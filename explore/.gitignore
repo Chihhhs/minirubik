@@ -7,3 +7,6 @@
 !*.sh
 !Makefile
 !.gitignore
+# Generated tables (make tables.h tables.s in stage3/).
+tables.h
+tables.s
