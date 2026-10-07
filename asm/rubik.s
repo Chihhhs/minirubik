@@ -24,7 +24,7 @@ F:          .zero 12    # .byte [MAXD] face of the move into depth g (root: 0xFF
 CF:         .zero 12    # .byte [MAXD] face being tried (3 = done)
 CT:         .zero 12    # .byte [MAXD] turns done on that face (0..3)
 path:       .zero 12    # .byte [MAXD] solution moves 0..8
-digits:     .zero 14    # input string to number (bytes).
+digits:     .zero 14    # .bytes 14 elements, input string to number
 
 # Move names, 4 bytes each (index m -> offset m*4), order as solver.c:
 # R R2 R' B B2 B' D D2 D'
@@ -182,25 +182,40 @@ m1_mul_done:
 ida_loop:
     li   t0, 11
     blt  t0, s2, ida_fail       # bound > 11 → 不可能，失敗
-    mv   a0, s2                 # ---- 測試：印 bound ----
-    li   a7, 1
-    ecall
-    li   a0, 32
-    li   a7, 11
-    ecall
     jal  ra, dls                # a0 = 1 找到 / 0 沒找到
     bne  a0, x0, ida_found      # 找到 → 跳出
     addi s2, s2, 1              # bound + 1
     j    ida_loop
 
+#  M3: 印出 path[0..s2-1]，格式 "R B' D2 ...\n"
 ida_found:
-    li   a0, 70                 # 'F'
+    la   t1, path               # t1 = &path[0]
+    mv   t3, s2                 # t3 = 還剩幾步要印（長度 = bound）
+m3_loop:
+    beq  t3, x0, m3_done        # 印完了（solved 長度 0，直接結束）
+    lbu  t2, 0(t1)              # t2 = path[k]   (path 是 .byte)
+    slli t2, t2, 2              # t2 = m * 4     (左移幾位？)
+    la   t4, move_names
+    add  t4, t4, t2             # t4 = &move_names[m]
+    lbu  a0, 0(t4)              # 第 1 個字元（R / B / D）
     li   a7, 11
     ecall
-    mv   a0, s2                 # 印長度 (= bound)
-    li   a7, 1
+    lbu  a0, 1(t4)              # 第 2 個字元（'2'、'\'' 或 0）
+    beq  a0, x0, m3_space       # 是 0 → 沒有第 2 個字元
+    ecall                       # a7 還是 11
+m3_space:                       # (Ripes 的 ecall 4 會連 '\0' 一起印出，所以改用 ecall 11)
+    li   a0, 32
+    li   a7, 11
+    ecall                       # 印空格
+    addi t1, t1, 1              # 下一步
+    addi t3, t3, -1             # 剩下的 - 1
+    j    m3_loop
+m3_done:
+    li   a0, 10                 # '\n'
+    li   a7, 11
     ecall
-    j ida_done
+    j    ida_done
+
 ida_fail:
     li   a0, 1                  # 不應該發生 → exit 1
     li   a7, 93
