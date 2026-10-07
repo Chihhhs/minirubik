@@ -214,7 +214,54 @@ m3_done:
     li   a0, 10                 # '\n'
     li   a7, 11
     ecall
-    j    ida_done
+
+#p = s0; o = s1;                          // 從起點開始
+#for (k = 0; k < len; k++) {
+#    m = path[k];
+#    f = m / 3;  n = m % 3 + 1;           // 面、轉幾次（不能除！）
+#    repeat n 次: (p, o) = turn(f, p, o);
+#}
+#exit(p == 0 && o == 0 ? 0 : 1);
+
+# M4 / T5: 從起點照 path 轉回去，檢查是不是 solved
+    mv   s4, s0                 # p = 起點 p
+    mv   s5, s1                 # o = 起點 o
+    la   s6, path               # s6 = &path[0]
+    mv   s7, s2                 # s7 = 步數
+t5_loop:
+    beq  s7, x0, t5_check       # 每一步都轉完了
+    lbu t0, 0(s6)              # t0 = m = path[k]
+    li   s9, 0                  # f = 0
+    li   t1, 3
+t5_div3:                        # 一直減 3：減幾次 = f，剩下 = m % 3
+    blt  t0, t1, t5_div3_done   # m < 3 → 停
+    addi t0, t0, -3             # m -= 3
+    addi s9, s9, 1              # f++
+    j    t5_div3
+t5_div3_done:
+    addi s8, t0, 1              # s8 = m % 3 + 1 = 轉幾次
+t5_turn:
+    mv   a1, s9                 # a1 = f
+    mv   a2, s4                 # a2 = p
+    mv   a3, s5                 # a3 = o
+    jal  ra, turn               # a0 = np, a1 = no
+    mv   s4, a0                 # p = np
+    mv   s5, a1                 # o = no
+    addi s8, s8, -1
+    bne  s8, x0, t5_turn        # 還要轉 → 回去
+    addi s6, s6, 1              # 下一步
+    addi s7, s7, -1
+    j    t5_loop
+t5_check:
+    or   t0, s4, s5             # t0 = p | o
+    bne  t0, x0, t5_fail        # 不是 0 → 沒有回到 solved
+    li   a0, 0                  # T5 通過 → exit 0
+    li   a7, 93
+    ecall
+t5_fail:
+    li   a0, 1                  # T5 失敗 → exit 1
+    li   a7, 93
+    ecall
 
 ida_fail:
     li   a0, 1                  # 不應該發生 → exit 1
