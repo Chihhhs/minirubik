@@ -32,7 +32,8 @@ gen() { # $1 = input string, $2 = gui|cli -> out/rubik_full.s
 
 run() { # $1 = input, $2 = proc
     gen "$1" cli
-    "$RIPES" --mode cli --src out/rubik_full.s -t asm --proc "$2" --iret \
+    extra=; [ "$2" = RV32_ISS ] || extra="--cycles --cpi"   # pipeline: also cycles / CPI
+    "$RIPES" --mode cli --src out/rubik_full.s -t asm --proc "$2" --iret $extra \
         --timeout 600000 2>&1
 }
 
