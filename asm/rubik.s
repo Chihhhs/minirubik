@@ -34,32 +34,32 @@ move_names: .byte 82,0,0,0,  82,50,0,0,  82,39,0,0
 
 .text
 main:
-    # TODO 1  parse:  input string -> p rank, o rank; invalid -> exit 2
-    #         (digits '1'..'7' / '1'..'3', bijection, sum o = 0 mod 3, length 14;
-    #          p = Lehmer code by Horner, o = base 3 of o[0..5]; no mul/div)
+#   TODO 1  parse:  input string -> p rank, o rank; invalid -> exit 2
+#        (digits '1'..'7' / '1'..'3', bijection, sum o = 0 mod 3, length 14;
+#        p = Lehmer code by Horner, o = base 3 of o[0..5]; no mul/div)
 
-# M1 step 1: digits[i] = input[i] - '1', i = 0..13
+#   M1 step 1: digits[i] = input[i] - '1', i = 0..13
     la   t0, input          # t0 = &input[0]
     la   t1, digits         # t1 = &digits[0]
     li   t3, 14             # t3 = 還剩幾個字元
 
 m1_copy:
-    lbu t2, 0(t0)            # t2 = 讀 t0 指到的 1 個 byte
+    lbu  t2, 0(t0)          # t2 = 讀 t0 指到的 1 個 byte
     addi t2, t2, -49        # t2 = t2 - '1'      (提示: '1' 的 ASCII 是 49)
-    sb t2, 0(t1)            # 把 t2 存到 t1 指到的 1 個 byte
+    sb   t2, 0(t1)          # 把 t2 存到 t1 指到的 1 個 byte
     addi t0, t0, 1          # t0 往下一格
     addi t1, t1, 1          # t1 往下一格
     addi t3, t3, -1         # 剩下的數量 - 1
-    bne t3, x0, m1_copy    # 如果 t3 != 0，回到 m1_copy
+    bne  t3, x0, m1_copy    # 如果 t3 != 0，回到 m1_copy
 
-# M1 step 2a: p[0..6] in 0..6 and all different 
+#   M1 step 2a: p[0..6] in 0..6 and all different 
     la   t1, digits         # t1 = &digits[0]
     li   t3, 7              # t3 = 還剩幾個
     li   t4, 0              # t4 = 看過的數字（bit 集合）
     li   t6, 7              # t6 = 上限 7（比較用）
 
 m1_perm:
-    lbu  t2, 0(t1)          # t2 = p[i]
+    lbu  t2, 0(t1)            # t2 = p[i]
     bgeu  t2, t6,  parse_fail # p[i] >= 7（無號）→ 不合法
     li   t5, 1
     sll t5, t5, t2         # t5 = 1 << p[i]
@@ -111,14 +111,14 @@ m1_orank:
     addi t3, t3, -1
     bne  t3, x0, m1_orank
 
-#  M1 step 4: p rank (Lehmer)
-#p = 0;
-#for (i = 0; i < 7; i++) {
-#    smaller = 0;
-#    for (j = i + 1; j < 7; j++)       // 內層：數右邊比 p[i] 小的
-#        if (p[j] < p[i]) smaller++;
-#    p = p * (7 - i) + smaller;        // 乘數 7, 6, 5, ..., 1
-#}
+#   M1 step 4: p rank (Lehmer)
+#   p = 0;
+#   for (i = 0; i < 7; i++) {
+#      smaller = 0;
+#     for (j = i + 1; j < 7; j++)       // 內層：數右邊比 p[i] 小的
+#         if (p[j] < p[i]) smaller++;
+#     p = p * (7 - i) + smaller;        // 乘數 7, 6, 5, ..., 1
+#   }
     la   t1, digits     # t1 = &p[0]
     li   s0, 0
     li   t3, 7       
@@ -168,14 +168,22 @@ m1_mul_done:
 
 # ------------------------------------------------------------------------------
 # |   TODO 2  ida_solve(p, o) -> length, path[]   (ida.h dls_iter + ida_solve) |
+# |   TODO 3  print path[0..len-1] with move_names, separated by spaces, '\n'  |
+# |   TODO 4  T5: re-apply path to (p, o) with pmove/omove; (0, 0) -> exit 0   |
 # ------------------------------------------------------------------------------
 #     輸入 s0 = p、s1 = o，輸出 a0 = h, 四次查表
 #     h = big[p * 9 + otab[o]];
 #     if (odist[o] > h) h = odist[o];
 
-    mv a1, s0
-    mv a2, s1
-    jal ra, h_of
+#   v2: 表的起始位址只算一次，放進 s5～s9
+    la   s5, pmove          # s5 = &pmove[0]
+    la   s6, omove          # s6 = &omove[0]
+    la   s7, big            # s7 = &big[0]
+    la   s8, otab           # s8 = &otab[0]
+    la   s9, odist          # s9 = &odist[0]
+    mv   a1, s0
+    mv   a2, s1
+    jal  ra, h_of
 
 # ---- M2b-2: IDA* outer loop ----
     mv   s2, a0                 # bound = h(root)
@@ -215,22 +223,22 @@ m3_done:
     li   a7, 11
     ecall
 
-#p = s0; o = s1;                          // 從起點開始
-#for (k = 0; k < len; k++) {
-#    m = path[k];
-#    f = m / 3;  n = m % 3 + 1;           // 面、轉幾次（不能除！）
-#    repeat n 次: (p, o) = turn(f, p, o);
-#}
-#exit(p == 0 && o == 0 ? 0 : 1);
+#   p = s0; o = s1;                          // 從起點開始
+#   for (k = 0; k < len; k++) {
+#       m = path[k];
+#       f = m / 3;  n = m % 3 + 1;           // 面、轉幾次（不能除！）
+#       repeat n 次: (p, o) = turn(f, p, o);
+#   }
+#   exit(p == 0 && o == 0 ? 0 : 1);
 
 # M4 / T5: 從起點照 path 轉回去，檢查是不是 solved
     mv   s4, s0                 # p = 起點 p
-    mv   s5, s1                 # o = 起點 o
-    la   s6, path               # s6 = &path[0]
+    mv   s10, s1                # o = 起點 o
+    la   s11, path              # s6 = &path[0]
     mv   s7, s2                 # s7 = 步數
 t5_loop:
     beq  s7, x0, t5_check       # 每一步都轉完了
-    lbu t0, 0(s6)              # t0 = m = path[k]
+    lbu  t0, 0(s11)              # t0 = m = path[k]
     li   s9, 0                  # f = 0
     li   t1, 3
 t5_div3:                        # 一直減 3：減幾次 = f，剩下 = m % 3
@@ -243,17 +251,17 @@ t5_div3_done:
 t5_turn:
     mv   a1, s9                 # a1 = f
     mv   a2, s4                 # a2 = p
-    mv   a3, s5                 # a3 = o
+    mv   a3, s10                # a3 = o
     jal  ra, turn               # a0 = np, a1 = no
     mv   s4, a0                 # p = np
-    mv   s5, a1                 # o = no
+    mv   s10, a1                # o = no
     addi s8, s8, -1
     bne  s8, x0, t5_turn        # 還要轉 → 回去
-    addi s6, s6, 1              # 下一步
+    addi s11, s11, 1            # 下一步
     addi s7, s7, -1
     j    t5_loop
 t5_check:
-    or   t0, s4, s5             # t0 = p | o
+    or   t0, s4, s10            # t0 = p | o
     bne  t0, x0, t5_fail        # 不是 0 → 沒有回到 solved
     li   a0, 0                  # T5 通過 → exit 0
     li   a7, 93
@@ -273,12 +281,6 @@ ida_done:
     li a7, 93 
     ecall
 
-    # TODO 3  print path[0..len-1] with move_names, separated by spaces, '\n'
-    # TODO 4  T5: re-apply path to (p, o) with pmove/omove; (0, 0) -> exit 0
-    li   a0, 1
-    li   a7, 93
-    ecall
-
 parse_fail:
     li      a0, 2               # exit 2 (invalid input)
     li      a7, 93              # ecall 93 = exit
@@ -289,8 +291,7 @@ parse_fail:
 #       會用到 t0, t1, t2
 h_of:
 #   M2a-1: 讀出 otab[o]
-    la   t0, otab          # t0 = otab 的起始位址
-    add  t0, t0, a2        # t0 = otab + o, o in a2
+    add  t0, s8, a2        # s0 = otab 的起始位址, t0 = otab + o, o in a2
     lbu  t1, 0(t0)         # t1 = 讀 1 個 byte
 
     # M2a-2: a0 = big[p*9 + otab[o]]
@@ -298,14 +299,12 @@ h_of:
     add  t2, t2, a1         # t2 = p*8 + p  = p*9
     add  t2, t2, t1         # t2 = p*9 + otab[o], otab[o] in t1
     
-    la   t0, big            # t0 = big 的起始位址
-    add  t0, t0, t2         # t0 = big + idx
+    add  t0, s7, t2         # s7 = big 的起始位址, t0 = big + idx
     lbu  a0, 0(t0)          # a0 = big[idx]
 
 #   M2a-3：和 odist[o] 取 max , finish h
 #   if (odist[o] > h) h = odist[o];     // h 在 a0
-    la   t0, odist          # odist 的起始位址
-    add  t0, t0, a2         # + o, o in a2
+    add  t0, s9, a2         # s9 = odist 的起始位址, + o, o in a2
     lbu  t1, 0(t0)          # t1 = odist[o]
     bge  a0, t1, h_done     # 如果 a0 >= t1，a0 已經是 max，跳過
     mv   a0, t1             # 否則 a0 = odist[o]
@@ -315,8 +314,8 @@ h_done:
 
 #   M2b-1 轉一次 turn
 turn:
-    la   t0, pmove
-    la   t1, omove
+    mv   t0, s5
+    mv   t1, s6
     li   t2, 10080              # pmove 一面的 bytes
     li   t3, 1458               # omove 一面的 bytes
 turn_face:
