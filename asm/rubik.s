@@ -155,21 +155,62 @@ m1_mul_done:
     addi t3, t3, -1
     bne  t3, x0, m1_prank
 
-# test
-    mv   a0, s0
+#   test m1, print rank p,o
+#    mv   a0, s0
+#    li   a7, 1
+#    ecall
+#    li a0, 32
+#    li a7, 11
+#    ecall
+#    mv a0, s1
+#    li a7, 1 
+#    ecall
+
+# ------------------------------------------------------------------------------
+# |   TODO 2  ida_solve(p, o) -> length, path[]   (ida.h dls_iter + ida_solve) |
+# ------------------------------------------------------------------------------
+#     輸入 s0 = p、s1 = o，輸出 a0 = h, 四次查表
+#     h = big[p * 9 + otab[o]];
+#     if (odist[o] > h) h = odist[o];
+
+    mv a1, s0
+    mv a2, s1
+    jal ra, h_of
+
+# ---- M2b-2: IDA* outer loop ----
+    mv   s2, a0                 # bound = h(root)
+ida_loop:
+    li   t0, 11
+    blt  t0, s2, ida_fail       # bound > 11 → 不可能，失敗
+    mv   a0, s2                 # ---- 測試：印 bound ----
     li   a7, 1
     ecall
-    li a0, 32
-    li a7, 11
+    li   a0, 32
+    li   a7, 11
     ecall
-    mv a0, s1
-    li a7, 1 
+    jal  ra, dls                # a0 = 1 找到 / 0 沒找到
+    bne  a0, x0, ida_found      # 找到 → 跳出
+    addi s2, s2, 1              # bound + 1
+    j    ida_loop
+
+ida_found:
+    li   a0, 70                 # 'F'
+    li   a7, 11
+    ecall
+    mv   a0, s2                 # 印長度 (= bound)
+    li   a7, 1
+    ecall
+    j ida_done
+ida_fail:
+    li   a0, 1                  # 不應該發生 → exit 1
+    li   a7, 93
+    ecall
+ida_done:
+
+    li a0, 1 
+    li a7, 93 
     ecall
 
-
-
-
-    # TODO 2  ida_solve(p, o) -> length, path[]   (ida.h dls_iter + ida_solve)
     # TODO 3  print path[0..len-1] with move_names, separated by spaces, '\n'
     # TODO 4  T5: re-apply path to (p, o) with pmove/omove; (0, 0) -> exit 0
     li   a0, 1
@@ -180,3 +221,218 @@ parse_fail:
     li      a0, 2               # exit 2 (invalid input)
     li      a7, 93              # ecall 93 = exit
     ecall
+
+#   h_of:  輸入 a1 = p, a2 = o
+#       輸出 a0 = h
+#       會用到 t0, t1, t2
+h_of:
+#   M2a-1: 讀出 otab[o]
+    la   t0, otab          # t0 = otab 的起始位址
+    add  t0, t0, a2        # t0 = otab + o, o in a2
+    lbu  t1, 0(t0)         # t1 = 讀 1 個 byte
+
+    # M2a-2: a0 = big[p*9 + otab[o]]
+    slli t2, a1, 3          # t2 = p << 3, p in a1
+    add  t2, t2, a1         # t2 = p*8 + p  = p*9
+    add  t2, t2, t1         # t2 = p*9 + otab[o], otab[o] in t1
+    
+    la   t0, big            # t0 = big 的起始位址
+    add  t0, t0, t2         # t0 = big + idx
+    lbu  a0, 0(t0)          # a0 = big[idx]
+
+#   M2a-3：和 odist[o] 取 max , finish h
+#   if (odist[o] > h) h = odist[o];     // h 在 a0
+    la   t0, odist          # odist 的起始位址
+    add  t0, t0, a2         # + o, o in a2
+    lbu  t1, 0(t0)          # t1 = odist[o]
+    bge  a0, t1, h_done     # 如果 a0 >= t1，a0 已經是 max，跳過
+    mv   a0, t1             # 否則 a0 = odist[o]
+h_done:
+    ret
+
+
+#   M2b-1 轉一次 turn
+turn:
+    la   t0, pmove
+    la   t1, omove
+    li   t2, 10080              # pmove 一面的 bytes
+    li   t3, 1458               # omove 一面的 bytes
+turn_face:
+    beq  a1, x0, turn_go        # f 數到 0 就停
+    add  t0, t0, t2             # pmove 跳到下一面
+    add  t1, t1, t3             # omove 跳到下一面
+    addi a1, a1, -1             # f - 1
+    j    turn_face
+turn_go:
+    slli t4, a2, 1              # t4 = p * 2
+    add  t0, t0, t4             # t0 = &pmove[f][p]
+    lhu   a0, 0(t0)             # a0 = pmove[f][p]   (2 bytes)
+    slli t4, a3, 1              # t4 = o * 2
+    add  t1, t1, t4             # t1 = &omove[f][o]
+    lhu  a1, 0(t1)              # a1 = omove[f][o]   (2 bytes)
+    ret
+
+dls:
+    addi sp, sp, -4
+    sw   ra, 0(sp)              # 保存 ra
+    li   s3, 0                  # g = 0
+
+    # P[0] = p, O[0] = o        (.half 陣列 → 用 sh)
+    la   t0, P
+    sh   s0, 0(t0)              # P[0] = s0
+    la   t0, O
+    sh   s1, 0(t0)              # O[0] = s1
+    # F[0] = 255  (根節點沒有「上一步的面」，用一個不會等於 0..3 的值)
+    la   t0, F
+    li   t1, 255
+    sb   t1, 0(t0)              # F[0] = 255   (.byte → sb)
+    # level_init(0): CF[0] = 0, CT[0] = 0, CP[0] = p, CO[0] = o
+    la   t0, CF
+    sb   x0, 0(t0)              # CF[0] = 0 
+    la   t0, CT
+    sb   x0, 0(t0)              # CT[0] = 0
+    la   t0, CP
+    sh   s0, 0(t0)              # CP[0] = p
+    la   t0, CO
+    sh   s1, 0(t0)              # CO[0] = o
+
+    # 根節點已經是 solved？ (p == 0 且 o == 0)
+    or   t0, s0, s1             # t0 = p | o  (兩個都是 0，結果才是 0)
+    beq  t0, x0, dls_found
+dls_loop:
+    la   t0, CF
+    add  t0, t0, s3             # t0 = &CF[g]
+    lbu  t2, 0(t0)              # t2 = CF[g]
+    la   t1, CT
+    add  t1, t1, s3             # t1 = &CT[g]
+    lbu  t3, 0(t1)              # t3 = CT[g]
+    la   t4, F
+    add  t4, t4, s3
+    lbu  t4, 0(t4)              # t4 = F[g]
+    li   t5, 3
+    beq  t3, t5, dls_nextface   # 這一面轉了 3 次 → 換面
+    beq  t2, t4, dls_nextface   # CF[g] == F[g]（同面剪枝）→ 換面
+    beq  t2, t5, dls_back       # CF[g] == 3 → 三面都試完
+    j dls_turn
+
+dls_nextface:                   # CF++、CT = 0、CP/CO 重設成 P/O
+    addi t2, t2, 1
+    sb   t2, 0(t0)              # CF[g] = t2
+    sb   x0, 0(t1)              # CT[g] = 0
+    slli t5, s3, 1              # t5 = g*2
+    la   t6, P
+    add  t6, t6, t5
+    lhu  a0, 0(t6)              # a0 = P[g]
+    la   t6, CP
+    add  t6, t6, t5
+    sh   a0, 0(t6)              # CP[g] = P[g]
+    la   t6, O
+    add  t6, t6, t5
+    lhu  a0, 0(t6)              # a0 = O[g]
+    la   t6, CO
+    add  t6, t6, t5
+    sh   a0, 0(t6)              # CO[g] = O[g]
+    j dls_loop
+
+dls_back:
+    beq  s3, x0, dls_notfound   # g == 0 → 這個 bound 沒有解
+    addi s3, s3, -1             # g--
+    j    dls_loop
+
+dls_turn:                       # 從 CP/CO 再轉一次（連轉）
+    mv   a1, t2                 # a1 = f = CF[g]
+    slli t5, s3, 1
+    la   t6, CP
+    add  t6, t6, t5
+    lhu  a2, 0(t6)              # a2 = CP[g]
+    la   t6, CO
+    add  t6, t6, t5
+    lhu  a3, 0(t6)              # a3 = CO[g]
+    jal  ra, turn               # a0 = np, a1 = no   (t0~t4 被弄亂了!)
+    slli t5, s3, 1
+    la   t6, CP
+    add  t6, t6, t5
+    sh   a0, 0(t6)              # CP[g] = np
+    la   t6, CO
+    add  t6, t6, t5
+    sh   a1, 0(t6)              # CO[g] = no
+    la   t6, CT
+    add  t6, t6, s3
+    lbu  t5, 0(t6)
+    addi t5, t5, 1
+    sb   t5, 0(t6)              # CT[g]++
+    or   t5, a0, a1
+    beq  t5, x0, dls_hit      # 子節點是 solved → 找到
+
+# ---- h pruning: g + 1 + h(np, no) > bound → don't descend ----
+    mv   a2, a1                 # a2 = no   (move a1 first, or it gets overwritten)
+    mv   a1, a0                 # a1 = np
+    jal  ra, h_of               # a0 = h      (t0~t2 get clobbered)
+    addi t5, s3, 1              # t5 = g + 1
+    add  t5, t5, a0             # t5 = g + 1 + h
+    blt  s2, t5, dls_loop       # bound < g+1+h → prune, back to loop top (hint: blt)
+
+# ---- descend ----
+    jal  ra, dls_record         # path[g] = move   (t2 = f afterwards)
+    slli t5, s3, 1
+    la   t6, CP
+    add  t6, t6, t5
+    lhu a0, 0(t6)              # a0 = np = CP[g]
+    la   t6, CO
+    add  t6, t6, t5
+    lhu  a1, 0(t6)              # a1 = no = CO[g]
+    addi s3, s3, 1              # g++
+    slli t5, s3, 1              # t5 = new g * 2
+    la   t6, P
+    add  t6, t6, t5
+    sh   a0, 0(t6)              # P[g] = np
+    la   t6, O
+    add  t6, t6, t5
+    sh   a1, 0(t6)              # O[g] = no
+    la   t6, CP
+    add  t6, t6, t5
+    sh   a0, 0(t6)              # CP[g] = np
+    la   t6, CO
+    add  t6, t6, t5
+    sh   a1, 0(t6)              # CO[g] = no
+    la   t6, F
+    add  t6, t6, s3
+    sb   t2, 0(t6)              # F[g] = f (the face we just turned)
+    la   t6, CF
+    add  t6, t6, s3
+    sb   x0, 0(t6)              # CF[g] = 0
+    la   t6, CT
+    add  t6, t6, s3
+    sb   x0, 0(t6)              # CT[g] = 0
+    j    dls_loop
+
+dls_hit:                        # child is solved: record the last move, then found
+    jal  ra, dls_record
+    j    dls_found
+
+dls_notfound:
+    li   a0, 0
+    j    dls_ret
+dls_found:
+    li   a0, 1
+dls_ret:
+    lw   ra, 0(sp)
+    addi sp, sp, 4
+    ret
+
+# path[g] = CF[g]*3 + CT[g] - 1；output t2 = CF[g] (the face)
+dls_record:
+    la   t0, CF
+    add  t0, t0, s3
+    lbu  t2, 0(t0)              # t2 = f
+    la   t1, CT
+    add  t1, t1, s3
+    lbu  t3, 0(t1)              # t3 = number of turns
+    slli t4, t2, 1              # t4 = f << 1
+    add  t4, t4, t2             # t4 = f * 3
+    add  t4, t4, t3             # + turns
+    addi t4, t4, -1             # - 1
+    la   t6, path
+    add  t6, t6, s3
+    sb   t4, 0(t6)              # path[g] = move
+    ret

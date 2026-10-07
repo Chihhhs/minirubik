@@ -25,6 +25,7 @@ gen() { # $1 = input string, $2 = gui|cli -> out/rubik_full.s
             -e "s/^\.equ RENDER, .*/.equ RENDER, 0/" \
             -e "/^# RENDER-BEGIN/,/^# RENDER-END/d" rubik.s
     fi >out/rubik_full.s
+    echo >>out/rubik_full.s     # rubik.s may not end with a newline
     cat "$TABLES" >>out/rubik_full.s
 }
 
