@@ -181,12 +181,9 @@ m1_mul_done:
     la   s7, big            # s7 = &big[0]
     la   s8, otab           # s8 = &otab[0]
     la   s9, odist          # s9 = &odist[0]
-    mv   a1, s0
-    mv   a2, s1
-    jal  ra, h_of
+    li   s2, 0              # bound 從 0 開始（v3：不再算 h）
 
-# ---- M2b-2: IDA* outer loop ----
-    mv   s2, a0                 # bound = h(root)
+#    M2b-2: IDA* outer loop ----
 ida_loop:
     li   t0, 11
     blt  t0, s2, ida_fail       # bound > 11 → 不可能，失敗
@@ -289,27 +286,27 @@ parse_fail:
 #   h_of:  輸入 a1 = p, a2 = o
 #       輸出 a0 = h
 #       會用到 t0, t1, t2
-h_of:
-#   M2a-1: 讀出 otab[o]
-    add  t0, s8, a2        # s0 = otab 的起始位址, t0 = otab + o, o in a2
-    lbu  t1, 0(t0)         # t1 = 讀 1 個 byte
+# h_of:
+# #   M2a-1: 讀出 otab[o]
+#     add  t0, s8, a2        # s0 = otab 的起始位址, t0 = otab + o, o in a2
+#     lbu  t1, 0(t0)         # t1 = 讀 1 個 byte
 
-    # M2a-2: a0 = big[p*9 + otab[o]]
-    slli t2, a1, 3          # t2 = p << 3, p in a1
-    add  t2, t2, a1         # t2 = p*8 + p  = p*9
-    add  t2, t2, t1         # t2 = p*9 + otab[o], otab[o] in t1
+#     # M2a-2: a0 = big[p*9 + otab[o]]
+#     slli t2, a1, 3          # t2 = p << 3, p in a1
+#     add  t2, t2, a1         # t2 = p*8 + p  = p*9
+#     add  t2, t2, t1         # t2 = p*9 + otab[o], otab[o] in t1
     
-    add  t0, s7, t2         # s7 = big 的起始位址, t0 = big + idx
-    lbu  a0, 0(t0)          # a0 = big[idx]
+#     add  t0, s7, t2         # s7 = big 的起始位址, t0 = big + idx
+#     lbu  a0, 0(t0)          # a0 = big[idx]
 
-#   M2a-3：和 odist[o] 取 max , finish h
-#   if (odist[o] > h) h = odist[o];     // h 在 a0
-    add  t0, s9, a2         # s9 = odist 的起始位址, + o, o in a2
-    lbu  t1, 0(t0)          # t1 = odist[o]
-    bge  a0, t1, h_done     # 如果 a0 >= t1，a0 已經是 max，跳過
-    mv   a0, t1             # 否則 a0 = odist[o]
-h_done:
-    ret
+# #   M2a-3：和 odist[o] 取 max , finish h
+# #   if (odist[o] > h) h = odist[o];     // h 在 a0
+#     add  t0, s9, a2         # s9 = odist 的起始位址, + o, o in a2
+#     lbu  t1, 0(t0)          # t1 = odist[o]
+#     bge  a0, t1, h_done     # 如果 a0 >= t1，a0 已經是 max，跳過
+#     mv   a0, t1             # 否則 a0 = odist[o]
+# h_done:
+#     ret
 
 
 #   M2b-1 轉一次 turn
@@ -338,62 +335,58 @@ dls:
     sw   ra, 0(sp)              # 保存 ra
     li   s3, 0                  # g = 0
 
-    # P[0] = p, O[0] = o        (.half 陣列 → 用 sh)
-    la   t0, P
-    sh   s0, 0(t0)              # P[0] = s0
-    la   t0, O
-    sh   s1, 0(t0)              # O[0] = s1
-    # F[0] = 255  (根節點沒有「上一步的面」，用一個不會等於 0..3 的值)
-    la   t0, F
-    li   t1, 255
-    sb   t1, 0(t0)              # F[0] = 255   (.byte → sb)
-    # level_init(0): CF[0] = 0, CT[0] = 0, CP[0] = p, CO[0] = o
-    la   t0, CF
-    sb   x0, 0(t0)              # CF[0] = 0 
-    la   t0, CT
-    sb   x0, 0(t0)              # CT[0] = 0
-    la   t0, CP
-    sh   s0, 0(t0)              # CP[0] = p
-    la   t0, CO
-    sh   s1, 0(t0)              # CO[0] = o
+#   v2, search 的陣列共用一個起點 s4
+#   P O CP CO F CF CT path 在 .data 裡是緊緊排在一起的。
+#   所以只要知道 P 的位址 (s4), 其他 = s4 + 固定的距離
 
-    # 根節點已經是 solved？ (p == 0 且 o == 0)
+#   P	    0	half	s4 + g*2 + 0
+#   O	    24	half	s4 + g*2 + 24
+#   CP	    48	half	s4 + g*2 + 48
+#   CO	    72	half	s4 + g*2 + 72
+#   F	    96	byte	s4 + g + 96
+#   CF	    108	byte	s4 + g + 108
+#   CT	    120	byte	s4 + g + 120
+#   path	132	byte	s4 + g + 132
+
+    la   s4, P                  # v2: s4 = search 陣列的起點（P 在最前面）
+    # P[0] = p, O[0] = o
+    sh   s0, 0(s4)              # P[0] = p
+    sh   s1, 24(s4)             # O[0] = o
+    # F[0] = 255
+    li   t1, 255
+    sb   t1, 96(s4)             # F[0] = 255
+    # level_init(0)
+    sb   x0, 108(s4)            # CF[0] = 0
+    sb   x0, 120(s4)            # CT[0] = 0
+    sh   s0, 48(s4)             # CP[0] = p
+    sh   s1, 72(s4)             # CO[0] = o
+
+#   根節點已經是 solved (p == 0 且 o == 0)
     or   t0, s0, s1             # t0 = p | o  (兩個都是 0，結果才是 0)
     beq  t0, x0, dls_found
-dls_loop:
-    la   t0, CF
-    add  t0, t0, s3             # t0 = &CF[g]
-    lbu  t2, 0(t0)              # t2 = CF[g]
-    la   t1, CT
-    add  t1, t1, s3             # t1 = &CT[g]
-    lbu  t3, 0(t1)              # t3 = CT[g]
-    la   t4, F
-    add  t4, t4, s3
-    lbu  t4, 0(t4)              # t4 = F[g]
-    li   t5, 3
-    beq  t3, t5, dls_nextface   # 這一面轉了 3 次 → 換面
-    beq  t2, t4, dls_nextface   # CF[g] == F[g]（同面剪枝）→ 換面
-    beq  t2, t5, dls_back       # CF[g] == 3 → 三面都試完
-    j dls_turn
 
-dls_nextface:                   # CF++、CT = 0、CP/CO 重設成 P/O
+dls_loop:
+    add  t0, s4, s3             # t0 = s4 + g（byte 陣列共用這個位址）
+    lbu  t2, 108(t0)            # t2 = CF[g]
+    lbu  t3, 120(t0)            # t3 = CT[g]
+    lbu  t4,  96(t0)            # t4 = F[g]
+    li   t5, 3
+    beq  t3, t5, dls_nextface
+    beq  t2, t4, dls_nextface
+    beq  t2, t5, dls_back
+    j    dls_turn
+
+dls_nextface:
     addi t2, t2, 1
-    sb   t2, 0(t0)              # CF[g] = t2
-    sb   x0, 0(t1)              # CT[g] = 0
+    sb   t2, 108(t0)            # CF[g] = t2    （t0 還是 s4 + g）
+    sb   x0, 120(t0)            # CT[g] = 0
     slli t5, s3, 1              # t5 = g*2
-    la   t6, P
-    add  t6, t6, t5
+    add  t6, s4, t5             # t6 = s4 + g*2（half 陣列共用這個位址）
     lhu  a0, 0(t6)              # a0 = P[g]
-    la   t6, CP
-    add  t6, t6, t5
-    sh   a0, 0(t6)              # CP[g] = P[g]
-    la   t6, O
-    add  t6, t6, t5
-    lhu  a0, 0(t6)              # a0 = O[g]
-    la   t6, CO
-    add  t6, t6, t5
-    sh   a0, 0(t6)              # CO[g] = O[g]
-    j dls_loop
+    sh   a0, 48(t6)             # CP[g] = P[g]
+    lhu  a0, 24(t6)             # a0 = O[g]
+    sh   a0, 72(t6)             # CO[g] = O[g]
+    j    dls_loop
 
 dls_back:
     beq  s3, x0, dls_notfound   # g == 0 → 這個 bound 沒有解
@@ -425,13 +418,22 @@ dls_turn:                       # 從 CP/CO 再轉一次（連轉）
     or   t5, a0, a1
     beq  t5, x0, dls_hit      # 子節點是 solved → 找到
 
-# ---- h pruning: g + 1 + h(np, no) > bound → don't descend ----
-    mv   a2, a1                 # a2 = no   (move a1 first, or it gets overwritten)
-    mv   a1, a0                 # a1 = np
-    jal  ra, h_of               # a0 = h      (t0~t2 get clobbered)
+#   h 剪枝（v3: h_of inline）：h = max(big[np*9 + otab[no]], odist[no])
+    add  t0, s8, a1            # t0 = otab + no
+    lbu  t1, 0(t0)             # t1 = otab[no]
+    slli t3, a0, 3             # t3 = np * 8
+    add  t3, t3, a0            # t3 = np * 9
+    add  t3, t3, t1            # t3 = np*9 + otab[no]
+    add  t3, s7, t3            # t3 = big + idx
+    lbu  t3, 0(t3)             # t3 = big[idx]
+    add  t0, s9, a1             # t0 = odist + no
+    lbu  t1, 0(t0)              # t1 = odist[no]
+    bge  t3, t1, dls_hmax       # big 比較大 → t3 就是 h
+    mv   t3, t1                 # 否則 h = odist[no]
+dls_hmax:
     addi t5, s3, 1              # t5 = g + 1
-    add  t5, t5, a0             # t5 = g + 1 + h
-    blt  s2, t5, dls_loop       # bound < g+1+h → prune, back to loop top (hint: blt)
+    add  t5, t5, t3             # t5 = g + 1 + h
+    blt  s2, t5, dls_loop       # bound < g+1+h → 剪
 
 # ---- descend ----
     jal  ra, dls_record         # path[g] = move   (t2 = f afterwards)
