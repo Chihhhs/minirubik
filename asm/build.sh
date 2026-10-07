@@ -4,6 +4,7 @@
 #   ./build.sh                  all tests on RV32_ISS (pass/fail + retired)
 #   ./build.sh INPUT [proc]     one input, full Ripes output
 #   ./build.sh full [INPUT]     only write out/rubik_full.s (for the Ripes GUI)
+#   ./build.sh size             .text / data bytes of the CLI build (GNU as, renderer out)
 # Renderer: Ripes has no .if, and the CLI has no LED peripheral, so any line
 # using LED_MATRIX_0_* fails to assemble there. Put all renderer code between
 # lines "# RENDER-BEGIN" and "# RENDER-END": CLI builds delete those blocks
@@ -36,6 +37,11 @@ run() { # $1 = input, $2 = proc
 }
 
 case "$1" in
+size)
+    gen 21345671111111 cli
+    riscv64-elf-as -march=rv32i -mabi=ilp32 out/rubik_full.s -o out/rubik.o || exit 1
+    riscv64-elf-size -A out/rubik.o | awk '$1 ~ /^\.(text|data|bss|rodata)/ {print $1, $2, "bytes"}'
+    exit 0 ;;
 full) gen "${2:-21345671111111}" gui; echo "wrote out/rubik_full.s (RENDER = 1, for the GUI)"; exit 0 ;;
 ?*)   run "$1" "${2:-RV32_ISS}"; exit 0 ;;
 esac
