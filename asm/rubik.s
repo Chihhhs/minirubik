@@ -23,7 +23,7 @@ CO:         .zero 24    # .half [MAXD] o after CT turns
 F:          .zero 12    # .byte [MAXD] face of the move into depth g (root: 0xFF)
 CF:         .zero 12    # .byte [MAXD] face being tried (3 = done)
 CT:         .zero 12    # .byte [MAXD] turns done on that face (0..3)
-path:       .zero 12    # .byte [MAXD] solution moves 0..8
+# path:       .zero 12    # .byte [MAXD] solution moves 0..8
 digits:     .zero 14    # .bytes 14 elements, input string to number
 
 # Move names, 4 bytes each (index m -> offset m*4), order as solver.c:
@@ -92,18 +92,20 @@ m1_mod3_done:
     bne t4, x0, parse_fail
 
 len_check:
-    la t1, input
-    lbu a0, 14(t1)
+    # la t1, input
+    # lbu a0, 14(t1)
+    lbu a0, 0(t0) # m1_copy 結束時 t0 = &input[14]（沒人改 t0）
     bne a0, x0, parse_fail
+    
 
-# M1 Step 3 o Rank
-    la t1, digits     # t1 = &digits[0]
-    addi t1, t1, 7   # t1 = &digits[7]
+#   M1 Step 3 o Rank
+    # la t1, digits     # t1 = &digits[0]
+    addi t1, t1, -7   # t1 = &digits[14], -7 &digits[7]
     li s1, 0    # o rank
     li t3, 6    # loop o[0..5]
 
 m1_orank:
-    lbu   t2, 0(t1)       # t2 = o[i]
+    lbu  t2, 0(t1)       # t2 = o[i]
     slli t5, s1, 1       # s1 * 2 
     add  s1, t5, s1      # s1 = t5 + s1
     add  s1, s1, t2      # s1 = s1 + o[i]
@@ -119,11 +121,12 @@ m1_orank:
 #         if (p[j] < p[i]) smaller++;
 #     p = p * (7 - i) + smaller;        // 乘數 7, 6, 5, ..., 1
 #   }
-    la   t1, digits     # t1 = &p[0]
+    # la   t1, digits     # t1 = &p[0]
     li   s0, 0
     li   t3, 7       
+    addi t1, t1, -13        # m1_orank 結束時 t1 = &digits[13]
 m1_prank:
-    lbu  t2, 0(t1)     # t2 = p[i]
+    lbu  t2, 0(t1)      # t2 = p[i]
     li   a0, 0          # smaller = 0
     addi t4, t1, 1      # t4 = t1 + 1   (&p[i+1])
     addi t5, t3, -1     # t5 = t3 - 1   (右邊 j)
@@ -180,13 +183,13 @@ m1_mul_done:
     la   s6, omove          # s6 = &omove[0]
     la   s7, big            # s7 = &big[0]
     la   s8, otab           # s8 = &otab[0]
-    la   s9, odist          # s9 = &odist[0]
+    # la   s9, odist          # s9 = &odist[0]
     li   s2, 0              # bound 從 0 開始（v3：不再算 h）
 
 #    M2b-2: IDA* outer loop ----
 ida_loop:
     li   t0, 11
-    blt  t0, s2, ida_fail       # bound > 11 → 不可能，失敗
+    blt  t0, s2, t5_fail       # bound > 11 → 不可能，失敗
     jal  ra, dls                # a0 = 1 找到 / 0 沒找到
     bne  a0, x0, ida_found      # 找到 → 跳出
     addi s2, s2, 1              # bound + 1
@@ -194,11 +197,16 @@ ida_loop:
 
 #  M3: 印出 path[0..s2-1]，格式 "R B' D2 ...\n"
 ida_found:
-    la   t1, path               # t1 = &path[0]
-    mv   t3, s2                 # t3 = 還剩幾步要印（長度 = bound）
+    mv   t1, s4                 # t1 = s4 + k（k = 0；search 剛結束，s4 還是 &P）
+    mv   t3, s2
 m3_loop:
-    beq  t3, x0, m3_done        # 印完了（solved 長度 0，直接結束）
-    lbu  t2, 0(t1)              # t2 = path[k]   (path 是 .byte)
+    beq  t3, x0, m3_done
+    lbu  t2, 108(t1)            # t2 = f = CF[k]
+    lbu  t5, 120(t1)            # t5 = CT[k]
+    slli t4, t2, 1              # t4 = f*2
+    add  t2, t4, t2             # t2 = f*3
+    add  t2, t2, t5             # t2 = f*3 + CT
+    addi t2, t2, -1             # t2 = m
     slli t2, t2, 2              # t2 = m * 4     (左移幾位？)
     la   t4, move_names
     add  t4, t4, t2             # t4 = &move_names[m]
@@ -228,23 +236,15 @@ m3_done:
 #   }
 #   exit(p == 0 && o == 0 ? 0 : 1);
 
-# M4 / T5: 從起點照 path 轉回去，檢查是不是 solved
-    mv   s4, s0                 # p = 起點 p
+#   M4 / T5: 從起點照 path 轉回去，檢查是不是 solved
+    addi s11, s4, 108           # s11 = &CF[0]  （s4 還是 &P，所以要在下一行之前！）
+    mv   s4, s0                 # p = 起點 p   （從這行開始 s4 就不是 &P 了）
     mv   s10, s1                # o = 起點 o
-    la   s11, path              # s6 = &path[0]
     mv   s7, s2                 # s7 = 步數
 t5_loop:
-    beq  s7, x0, t5_check       # 每一步都轉完了
-    lbu  t0, 0(s11)              # t0 = m = path[k]
-    li   s9, 0                  # f = 0
-    li   t1, 3
-t5_div3:                        # 一直減 3：減幾次 = f，剩下 = m % 3
-    blt  t0, t1, t5_div3_done   # m < 3 → 停
-    addi t0, t0, -3             # m -= 3
-    addi s9, s9, 1              # f++
-    j    t5_div3
-t5_div3_done:
-    addi s8, t0, 1              # s8 = m % 3 + 1 = 轉幾次
+    beq  s7, x0, t5_check
+    lbu  s9, 0(s11)           # s9 = f = CF[k], offset 前面加過了
+    lbu  s8, 12(s11)          # s8 = n = CT[k]（CT = CF + 12 bytes）
 t5_turn:
     mv   a1, s9                 # a1 = f
     mv   a2, s4                 # a2 = p
@@ -268,16 +268,6 @@ t5_fail:
     li   a7, 93
     ecall
 
-ida_fail:
-    li   a0, 1                  # 不應該發生 → exit 1
-    li   a7, 93
-    ecall
-ida_done:
-
-    li a0, 1 
-    li a7, 93 
-    ecall
-
 parse_fail:
     li      a0, 2               # exit 2 (invalid input)
     li      a7, 93              # ecall 93 = exit
@@ -286,28 +276,7 @@ parse_fail:
 #   h_of:  輸入 a1 = p, a2 = o
 #       輸出 a0 = h
 #       會用到 t0, t1, t2
-# h_of:
-# #   M2a-1: 讀出 otab[o]
-#     add  t0, s8, a2        # s0 = otab 的起始位址, t0 = otab + o, o in a2
-#     lbu  t1, 0(t0)         # t1 = 讀 1 個 byte
-
-#     # M2a-2: a0 = big[p*9 + otab[o]]
-#     slli t2, a1, 3          # t2 = p << 3, p in a1
-#     add  t2, t2, a1         # t2 = p*8 + p  = p*9
-#     add  t2, t2, t1         # t2 = p*9 + otab[o], otab[o] in t1
-    
-#     add  t0, s7, t2         # s7 = big 的起始位址, t0 = big + idx
-#     lbu  a0, 0(t0)          # a0 = big[idx]
-
-# #   M2a-3：和 odist[o] 取 max , finish h
-# #   if (odist[o] > h) h = odist[o];     // h 在 a0
-#     add  t0, s9, a2         # s9 = odist 的起始位址, + o, o in a2
-#     lbu  t1, 0(t0)          # t1 = odist[o]
-#     bge  a0, t1, h_done     # 如果 a0 >= t1，a0 已經是 max，跳過
-#     mv   a0, t1             # 否則 a0 = odist[o]
-# h_done:
-#     ret
-
+#   change to inline h
 
 #   M2b-1 轉一次 turn
 turn:
@@ -339,6 +308,7 @@ dls:
 #   P O CP CO F CF CT path 在 .data 裡是緊緊排在一起的。
 #   所以只要知道 P 的位址 (s4), 其他 = s4 + 固定的距離
 
+##  Offset table of search state
 #   P	    0	half	s4 + g*2 + 0
 #   O	    24	half	s4 + g*2 + 24
 #   CP	    48	half	s4 + g*2 + 48
@@ -393,32 +363,24 @@ dls_back:
     addi s3, s3, -1             # g--
     j    dls_loop
 
-dls_turn:                       # 從 CP/CO 再轉一次（連轉）
-    mv   a1, t2                 # a1 = f = CF[g]
+dls_turn:
+    mv   a1, t2                 # a1 = f
     slli t5, s3, 1
-    la   t6, CP
-    add  t6, t6, t5
-    lhu  a2, 0(t6)              # a2 = CP[g]
-    la   t6, CO
-    add  t6, t6, t5
-    lhu  a3, 0(t6)              # a3 = CO[g]
-    jal  ra, turn               # a0 = np, a1 = no   (t0~t4 被弄亂了!)
-    slli t5, s3, 1
-    la   t6, CP
-    add  t6, t6, t5
-    sh   a0, 0(t6)              # CP[g] = np
-    la   t6, CO
-    add  t6, t6, t5
-    sh   a1, 0(t6)              # CO[g] = no
-    la   t6, CT
-    add  t6, t6, s3
-    lbu  t5, 0(t6)
+    add  t6, s4, t5             # t6 = s4 + g*2
+    lhu  a2, 48(t6)             # a2 = CP[g]
+    lhu  a3, 72(t6)             # a3 = CO[g]
+    jal  ra, turn               # turn 只用 t0～t4 → t6 還在
+    sh   a0, 48(t6)             # CP[g] = np
+    sh   a1, 72(t6)             # CO[g] = no
+    add  t0, s4, s3             # t0 = s4 + g
+    lbu  t5, 120(t0)            # t5 = CT[g]
     addi t5, t5, 1
-    sb   t5, 0(t6)              # CT[g]++
+    sb   t5, 120(t0)            # CT[g]++
     or   t5, a0, a1
-    beq  t5, x0, dls_hit      # 子節點是 solved → 找到
+    beq  t5, x0, dls_found      # 解答在 CF/CT 裡，找到就回傳 1
 
 #   h 剪枝（v3: h_of inline）：h = max(big[np*9 + otab[no]], odist[no])
+#   &odist[no] = &otab[no] + 729
     add  t0, s8, a1            # t0 = otab + no
     lbu  t1, 0(t0)             # t1 = otab[no]
     slli t3, a0, 3             # t3 = np * 8
@@ -426,8 +388,8 @@ dls_turn:                       # 從 CP/CO 再轉一次（連轉）
     add  t3, t3, t1            # t3 = np*9 + otab[no]
     add  t3, s7, t3            # t3 = big + idx
     lbu  t3, 0(t3)             # t3 = big[idx]
-    add  t0, s9, a1             # t0 = odist + no
-    lbu  t1, 0(t0)              # t1 = odist[no]
+#   add  t0, s9, a1             # t0 = odist + no
+    lbu  t1, 729(t0)            # t1 = odist[no]
     bge  t3, t1, dls_hmax       # big 比較大 → t3 就是 h
     mv   t3, t1                 # 否則 h = odist[no]
 dls_hmax:
@@ -435,43 +397,25 @@ dls_hmax:
     add  t5, t5, t3             # t5 = g + 1 + h
     blt  s2, t5, dls_loop       # bound < g+1+h → 剪
 
-# ---- descend ----
-    jal  ra, dls_record         # path[g] = move   (t2 = f afterwards)
+#   descend 
+    add  t0, s4, s3             # t0 = s4 + g
+    lbu  t2, 108(t0)            # t2 = f = CF[g]
     slli t5, s3, 1
-    la   t6, CP
-    add  t6, t6, t5
-    lhu a0, 0(t6)              # a0 = np = CP[g]
-    la   t6, CO
-    add  t6, t6, t5
-    lhu  a1, 0(t6)              # a1 = no = CO[g]
+    add  t6, s4, t5             # t6 = s4 + g*2（這一層）
+    lhu  a0, 48(t6)            # a0 = CP[g]
+    lhu  a1, 72(t6)            # a1 = CO[g]
     addi s3, s3, 1              # g++
-    slli t5, s3, 1              # t5 = new g * 2
-    la   t6, P
-    add  t6, t6, t5
-    sh   a0, 0(t6)              # P[g] = np
-    la   t6, O
-    add  t6, t6, t5
-    sh   a1, 0(t6)              # O[g] = no
-    la   t6, CP
-    add  t6, t6, t5
-    sh   a0, 0(t6)              # CP[g] = np
-    la   t6, CO
-    add  t6, t6, t5
-    sh   a1, 0(t6)              # CO[g] = no
-    la   t6, F
-    add  t6, t6, s3
-    sb   t2, 0(t6)              # F[g] = f (the face we just turned)
-    la   t6, CF
-    add  t6, t6, s3
-    sb   x0, 0(t6)              # CF[g] = 0
-    la   t6, CT
-    add  t6, t6, s3
-    sb   x0, 0(t6)              # CT[g] = 0
+    addi t6, t6, 2              # 下一層的 half 位址 = 往後 2 bytes
+    sh   a0, 0(t6)             # P[g] = np
+    sh   a1, 24(t6)            # O[g] = no
+    sh   a0, 48(t6)            # CP[g] = np
+    sh   a1, 72(t6)            # CO[g] = no
+    # add  t0, s4, s3            # t0 = s4 + 新的 g
+    addi t0, t0, 1             # t0 = s4 + g + 1
+    sb   t2, 96(t0)            # F[g] = f
+    sb   x0, 108(t0)            # CF[g] = 0
+    sb   x0, 120(t0)            # CT[g] = 0
     j    dls_loop
-
-dls_hit:                        # child is solved: record the last move, then found
-    jal  ra, dls_record
-    j    dls_found
 
 dls_notfound:
     li   a0, 0
@@ -481,21 +425,4 @@ dls_found:
 dls_ret:
     lw   ra, 0(sp)
     addi sp, sp, 4
-    ret
-
-# path[g] = CF[g]*3 + CT[g] - 1；output t2 = CF[g] (the face)
-dls_record:
-    la   t0, CF
-    add  t0, t0, s3
-    lbu  t2, 0(t0)              # t2 = f
-    la   t1, CT
-    add  t1, t1, s3
-    lbu  t3, 0(t1)              # t3 = number of turns
-    slli t4, t2, 1              # t4 = f << 1
-    add  t4, t4, t2             # t4 = f * 3
-    add  t4, t4, t3             # + turns
-    addi t4, t4, -1             # - 1
-    la   t6, path
-    add  t6, t6, s3
-    sb   t4, 0(t6)              # path[g] = move
     ret
