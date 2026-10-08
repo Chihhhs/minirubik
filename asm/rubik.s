@@ -377,7 +377,7 @@ dls_turn:
     addi t5, t5, 1
     sb   t5, 120(t0)            # CT[g]++
     or   t5, a0, a1
-    beq  t5, x0, ida_found      # 解答在 CF/CT 裡，找到就回傳 1
+    beq  t5, x0, dls_found_child      # 解答在 CF/CT 裡，找到就回傳 1
 
 #   h 剪枝（v3: h_of inline）：h = max(big[np*9 + otab[no]], odist[no])
 #   &odist[no] = &otab[no] + 729
@@ -420,3 +420,6 @@ dls_hmax:
 dls_notfound:           # bound + 1, looping
     addi s2, s2, 1      # s2 = bound + 1
     j    ida_loop       # retry check bound <= 11
+dls_found_child:
+    addi s2, s3, 1                 # 長度 = g + 1
+    j    ida_found

@@ -51,6 +51,9 @@ esac
 fail=0
 {
     grep -v '^#' ../tests/solutions.txt | awk -F'|' '{print $1 "|" (NF > 1 && $2 != "" ? split($2, a, " ") : 0) "|0"}'
+    echo "25314672313211|1|0"       # distance 1 (one R-face move)
+    echo "12356741112323|1|0"       # distance 1 (one B-face move)
+    echo "13642571111111|1|0"       # distance 1 (one D-face move)
     echo "14325671111111|11|0"      # hardest distance-11 state (rank 192,456)
     echo "11345671111111|-|2"       # not a permutation
     echo "21345671111112|-|2"       # orientation sum not 0 mod 3
