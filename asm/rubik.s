@@ -24,7 +24,7 @@ F:          .zero 12    # .byte [MAXD] face of the move into depth g (root: 0xFF
 CF:         .zero 12    # .byte [MAXD] face being tried (3 = done)
 CT:         .zero 12    # .byte [MAXD] turns done on that face (0..3)
 # path:       .zero 12    # .byte [MAXD] solution moves 0..8
-digits:     .zero 14    # .bytes 14 elements, input string to number
+# digits:     .zero 14    # .bytes 14 elements, input string to number
 
 # Move names, 4 bytes each (index m -> offset m*4), order as solver.c:
 # R R2 R' B B2 B' D D2 D'
@@ -38,28 +38,18 @@ main:
 #        (digits '1'..'7' / '1'..'3', bijection, sum o = 0 mod 3, length 14;
 #        p = Lehmer code by Horner, o = base 3 of o[0..5]; no mul/div)
 
-#   M1 step 1: digits[i] = input[i] - '1', i = 0..13
-    la   t0, input          # t0 = &input[0]
-    la   t1, digits         # t1 = &digits[0]
-    li   t3, 14             # t3 = 還剩幾個字元
-
-m1_copy:
-    lbu  t2, 0(t0)          # t2 = 讀 t0 指到的 1 個 byte
-    addi t2, t2, -49        # t2 = t2 - '1'      (提示: '1' 的 ASCII 是 49)
-    sb   t2, 0(t1)          # 把 t2 存到 t1 指到的 1 個 byte
-    addi t0, t0, 1          # t0 往下一格
-    addi t1, t1, 1          # t1 往下一格
-    addi t3, t3, -1         # 剩下的數量 - 1
-    bne  t3, x0, m1_copy    # 如果 t3 != 0，回到 m1_copy
-
-#   M1 step 2a: p[0..6] in 0..6 and all different 
-    la   t1, digits         # t1 = &digits[0]
+#   M1 step 1: input[i] = input[i] - '1', i = 0..13
+    # la   t0, input          # t0 = &input[0]
+    # la   t1, digits         # t1 = &digits[0]
+    la   t1, input            # t1 = &input[0]
+    # li   t3, 14             # t3 = 還剩幾個字元
     li   t3, 7              # t3 = 還剩幾個
     li   t4, 0              # t4 = 看過的數字（bit 集合）
-    li   t6, 7              # t6 = 上限 7（比較用）
+    li   t6, 7              # t6 = 上限 7
 
 m1_perm:
     lbu  t2, 0(t1)            # t2 = p[i]
+    addi t2, t2, -49          # char 2 num
     bgeu  t2, t6,  parse_fail # p[i] >= 7（無號）→ 不合法
     li   t5, 1
     sll t5, t5, t2         # t5 = 1 << p[i]
@@ -77,6 +67,7 @@ m1_perm:
 
 m1_ori:
     lbu  t2, 0(t1)
+    addi t2, t2, -49       # char 2 num
     bgeu t2, t6, parse_fail # o[i] >= 3
     add  t4, t4, t2         # sum o += o[i]
     addi t1, t1, 1
@@ -94,18 +85,18 @@ m1_mod3_done:
 len_check:
     # la t1, input
     # lbu a0, 14(t1)
-    lbu a0, 0(t0) # m1_copy 結束時 t0 = &input[14]（沒人改 t0）
+    lbu a0, 0(t1)           # t1 &input[14]
     bne a0, x0, parse_fail
     
 
 #   M1 Step 3 o Rank
-    # la t1, digits     # t1 = &digits[0]
     addi t1, t1, -7   # t1 = &digits[14], -7 &digits[7]
     li s1, 0    # o rank
     li t3, 6    # loop o[0..5]
 
 m1_orank:
     lbu  t2, 0(t1)       # t2 = o[i]
+    addi t2, t2, -49     # char 2 num
     slli t5, s1, 1       # s1 * 2 
     add  s1, t5, s1      # s1 = t5 + s1
     add  s1, s1, t2      # s1 = s1 + o[i]
@@ -189,11 +180,8 @@ m1_mul_done:
 #    M2b-2: IDA* outer loop ----
 ida_loop:
     li   t0, 11
-    blt  t0, s2, t5_fail       # bound > 11 → 不可能，失敗
-    jal  ra, dls                # a0 = 1 找到 / 0 沒找到
-    bne  a0, x0, ida_found      # 找到 → 跳出
-    addi s2, s2, 1              # bound + 1
-    j    ida_loop
+    blt  t0, s2, t5_fail      # bound > 11 → 不可能，失敗
+    j    dls                  # v6: founded → ida_found, notfound → dls_notfound
 
 #  M3: 印出 path[0..s2-1]，格式 "R B' D2 ...\n"
 ida_found:
@@ -257,20 +245,33 @@ t5_turn:
     addi s11, s11, 1            # 下一步
     addi s7, s7, -1
     j    t5_loop
+# t5_check:
+#     or   t0, s4, s10            # t0 = p | o
+#     bne  t0, x0, t5_fail        # 不是 0 → 沒有回到 solved
+#     li   a0, 0                  # T5 通過 → exit 0
+#     li   a7, 93
+#     ecall
+# t5_fail:
+#     li   a0, 1                  # T5 失敗 → exit 1
+#     li   a7, 93
+#     ecall
+
+# parse_fail:
+#     li      a0, 2               # exit 2 (invalid input)
+#     li      a7, 93              # ecall 93 = exit
+#     ecall
+
 t5_check:
     or   t0, s4, s10            # t0 = p | o
-    bne  t0, x0, t5_fail        # 不是 0 → 沒有回到 solved
-    li   a0, 0                  # T5 通過 → exit 0
-    li   a7, 93
-    ecall
-t5_fail:
-    li   a0, 1                  # T5 失敗 → exit 1
-    li   a7, 93
-    ecall
-
+    sltu a0, x0, t0             # a0 = (t0 != 0) ? 1 : 0, fail:pass
+    j    exit
 parse_fail:
-    li      a0, 2               # exit 2 (invalid input)
-    li      a7, 93              # ecall 93 = exit
+    li   a0, 2                  # exit 2（輸入不合法）
+    j    exit
+t5_fail:
+    li   a0, 1                  # exit 1（bound > 11，不該發生）
+exit:
+    li   a7, 93                 # 共用的 exit：a0 = exit code
     ecall
 
 #   h_of:  輸入 a1 = p, a2 = o
@@ -300,8 +301,7 @@ turn_go:
     ret
 
 dls:
-    addi sp, sp, -4
-    sw   ra, 0(sp)              # 保存 ra
+
     li   s3, 0                  # g = 0
 
 #   v2, search 的陣列共用一個起點 s4
@@ -333,7 +333,7 @@ dls:
 
 #   根節點已經是 solved (p == 0 且 o == 0)
     or   t0, s0, s1             # t0 = p | o  (兩個都是 0，結果才是 0)
-    beq  t0, x0, dls_found
+    beq  t0, x0, ida_found
 
 dls_loop:
     add  t0, s4, s3             # t0 = s4 + g（byte 陣列共用這個位址）
@@ -377,7 +377,7 @@ dls_turn:
     addi t5, t5, 1
     sb   t5, 120(t0)            # CT[g]++
     or   t5, a0, a1
-    beq  t5, x0, dls_found      # 解答在 CF/CT 裡，找到就回傳 1
+    beq  t5, x0, ida_found      # 解答在 CF/CT 裡，找到就回傳 1
 
 #   h 剪枝（v3: h_of inline）：h = max(big[np*9 + otab[no]], odist[no])
 #   &odist[no] = &otab[no] + 729
@@ -411,18 +411,12 @@ dls_hmax:
     sh   a0, 48(t6)            # CP[g] = np
     sh   a1, 72(t6)            # CO[g] = no
     # add  t0, s4, s3            # t0 = s4 + 新的 g
-    addi t0, t0, 1             # t0 = s4 + g + 1
-    sb   t2, 96(t0)            # F[g] = f
+    addi t0, t0, 1              # t0 = s4 + g + 1
+    sb   t2, 96(t0)             # F[g] = f
     sb   x0, 108(t0)            # CF[g] = 0
     sb   x0, 120(t0)            # CT[g] = 0
     j    dls_loop
 
-dls_notfound:
-    li   a0, 0
-    j    dls_ret
-dls_found:
-    li   a0, 1
-dls_ret:
-    lw   ra, 0(sp)
-    addi sp, sp, 4
-    ret
+dls_notfound:           # bound + 1, looping
+    addi s2, s2, 1      # s2 = bound + 1
+    j    ida_loop       # retry check bound <= 11
