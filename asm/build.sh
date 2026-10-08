@@ -55,6 +55,7 @@ fail=0
     echo "11345671111111|-|2"       # not a permutation
     echo "21345671111112|-|2"       # orientation sum not 0 mod 3
     echo "2134567111111|-|2"        # too short
+    echo "213456711111111|-|2"      # too long (only len_check catches it)
 } | while IFS='|' read -r in len code; do
     out=$(run "$in" RV32_ISS)
     got_code=$(printf '%s\n' "$out" | sed -n 's/.*exited with code: //p')
