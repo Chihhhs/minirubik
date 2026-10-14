@@ -32,6 +32,47 @@ move_names: .byte 82,0,0,0,  82,50,0,0,  82,39,0,0
             .byte 66,0,0,0,  66,50,0,0,  66,39,0,0
             .byte 68,0,0,0,  68,50,0,0,  68,39,0,0
 
+# RENDER-BEGIN
+# ---- M6 renderer 的資料（只在 GUI build 出現）----
+# search 只有 rank，畫圖要知道「每個位置是哪個角塊、轉了幾次」→ renderer 自己存一份陣列。
+# 第 e 格（e = 0..6）= solver 的第 e 個位置（也就是位置 e+1）；e = 7 = 固定不動的位置 0（前-上-左）。
+# 每個位置的 3 張貼紙叫 slot 0、1、2：slot 0 = U/D 那張，接著從角的外面看「順時針」。
+# 規則（render_model.py 推導並用 2000 個隨機狀態驗證）：
+#   位置 e 上是角塊 c、方位 o 時，slot k 顯示「角塊 c 的第 (k + o) mod 3 張貼紙」。
+.align 2
+rp:         .byte 0,1,2,3,4,5,6,7   # rp[e] = 位置 e 上的角塊（第 7 格固定 = 7）
+ro:         .byte 0,0,0,0,0,0,0,0   # ro[e] = 它的方位 0..2        （位址 = rp + 8）
+rtp:        .zero 8                 # 轉之前 rp 的備份               （rp + 16）
+rto:        .zero 8                 # 轉之前 ro 的備份               （rp + 24）
+rsrc:       .byte 1,4,2,0,3,5,6,7   # = solver.c 的 source[f][i]；一面一列、每列 8 個（R、B、D）
+            .byte 0,1,2,4,5,6,3,7
+            .byte 0,2,5,3,1,4,6,7
+rtw:        .byte 1,2,0,2,1,0,0,0   # = solver.c 的 twist[f][i]
+            .byte 0,0,0,1,2,1,2,0
+            .byte 0,0,0,0,0,0,0,0
+# 展開圖 35 x 20：每面 8 x 6 px，面之間 1 px 黑線；排法  . U . .  /  L F R B  /  . D . .
+# rxy[e][k] = 位置 e 的 slot k 在 LED 上的左上角 (x, y)，每格 2 bytes；每個 facelet 4 x 3 px。
+rxy:        .byte 13,3,  18,7,  13,7    # e=0 (前上右): U R F
+            .byte 13,14, 13,10, 18,10   # e=1 (前下右): D F R
+            .byte 9,14,  4,10,  9,10    # e=2 (前下左): D L F
+            .byte 13,0,  27,7,  22,7    # e=3 (後上右): U B R
+            .byte 13,17, 22,10, 27,10   # e=4 (後下右): D R B
+            .byte 9,17,  31,10, 0,10    # e=5 (後下左): D B L
+            .byte 9,0,   0,7,   31,7    # e=6 (後上左): U L B
+            .byte 9,3,   9,7,   4,7     # e=7 (前上左，固定): U F L
+# rcol[c][j] = 角塊 c 第 j 張貼紙的顏色（= solved 時它在自己位置上的 3 格顏色），每個 1 word。
+# U 白、F 綠、R 紅、B 藍、L 橘、D 黃。
+.align 2
+rcol:       .word 0xFFFFFF, 0xFF0000, 0x00C000   # 角塊 0: U R F
+            .word 0xFFFF00, 0x00C000, 0xFF0000   # 角塊 1: D F R
+            .word 0xFFFF00, 0xFF8000, 0x00C000   # 角塊 2: D L F
+            .word 0xFFFFFF, 0x0000FF, 0xFF0000   # 角塊 3: U B R
+            .word 0xFFFF00, 0xFF0000, 0x0000FF   # 角塊 4: D R B
+            .word 0xFFFF00, 0x0000FF, 0xFF8000   # 角塊 5: D B L
+            .word 0xFFFFFF, 0xFF8000, 0x0000FF   # 角塊 6: U L B
+            .word 0xFFFFFF, 0x00C000, 0xFF8000   # 角塊 7（固定）: U F L
+# RENDER-END
+
 .text
 main:
 #   TODO 1  parse:  input string -> p rank, o rank; invalid -> exit 2
@@ -148,6 +189,9 @@ m1_mul_done:
     addi t1, t1, 1
     addi t3, t3, -1
     bne  t3, x0, m1_prank
+# RENDER-BEGIN
+    jal  ra, r_init             # M6：輸入合法 → 先畫出起始狀態（search 還沒開始）
+# RENDER-END
 
 #   test m1, print rank p,o
 #    mv   a0, s0
@@ -208,6 +252,19 @@ m3_space:                       # (Ripes 的 ecall 4 會連 '\0' 一起印出，
     li   a0, 32
     li   a7, 11
     ecall                       # 印空格
+# RENDER-BEGIN
+#   M6 hook：剛印完第 k 步 → 把這一步套到 rp/ro 上、重畫。
+#   M3 迴圈還要用 t1（指到第 k 步）和 t3（剩幾步），renderer 會弄亂它們 → 先存到 stack。
+    addi sp, sp, -8            # 挪出 2 個 word 的空間（往低位址長，所以是負的）
+    sw   t1, 0(sp)
+    sw   t3, 4(sp)
+    lbu  a0, 108(t1)            # a0 = 面 f = CF[k]   （t1 = s4 + k，CF 的 offset？）
+    lbu  a1, 120(t1)            # a1 = 次數 n = CT[k]  （CT 的 offset）
+    jal  ra, r_step             # 轉 n 次、重畫
+    lw   t1, 0(sp)              # 讀回來
+    lw   t3, 4(sp)
+    addi sp, sp, 8              # 還原 sp
+# RENDER-END
     addi t1, t1, 1              # 下一步
     addi t3, t3, -1             # 剩下的 - 1
     j    m3_loop
@@ -273,6 +330,155 @@ t5_fail:
 exit:
     li   a7, 93                 # 共用的 exit：a0 = exit code
     ecall
+
+# RENDER-BEGIN
+# ==== M6 renderer（只在 GUI build；只用 stack 存東西，不動任何 s 暫存器：T5 還要用 s0/s1/s2/s4）====
+#   r_init：把（已經檢查過的）input 字串轉成 rp/ro，然後畫一次。
+#   input[0..6] = p 的 7 個字元，input[7..13] = o 的 7 個字元。
+
+r_init:
+    la   t4, input              # t4 = &input[e]
+    la   t5, rp                 # t5 = &rp[e]
+    li   t6, 7                  # 7 個位置（第 7 格固定，不用讀）
+r_init_loop:
+    lbu  t0, 0(t4)              # p
+    addi t0, t0, -49            # char2num
+    sb   t0, 0(t5)              # rp[e]
+    lbu  t0, 7(t4)            # o , p + 7
+    addi t0, t0, -49
+    sb   t0, 8(t5)            # ro[e] = o digits
+    addi t4, t4, 1
+    addi t5, t5, 1
+    addi t6, t6, -1
+    bne  t6, x0, r_init_loop
+    j    r_draw                 # 直接跳過去，r_draw 的 ret 會回到呼叫 r_init 的地方
+
+# r_step：a0 = 面 f、a1 = 轉幾次 n（1..3）；轉 n 次，再重畫。
+#   r_turn 會弄亂 a0/a1，所以把 ra、f、n 都存在 stack。
+r_step:
+    addi sp, sp, -12            # 3 個 word
+    sw   ra, 0(sp)
+    sw   a0, 4(sp)              # f
+    sw   a1, 8(sp)              # n
+r_step_turn:
+    lw   a0, 4(sp)            # 每次都重新讀 f
+    jal  ra, r_turn             # 轉一次
+    lw   a1, 8(sp)
+    addi a1, a1, -1            # 剩下的次數 - 1
+    sw   a1, 8(sp)
+    bne  a1, x0, r_step_turn    # 還沒轉完 → 再轉
+    lw   ra, 0(sp)
+    addi sp, sp, 12
+    j    r_draw                 # 尾呼叫：畫完直接回到 M3
+
+# r_turn：a0 = 面 f；把 rp/ro 轉一次 90°，跟 solver.c 的 quarter_turn 一樣：
+#   p[i] = 舊p[src[f][i]]，o[i] = (舊o[src[f][i]] + twist[f][i]) mod 3
+#   要先備份：不然 p[0] 改掉之後，後面要讀「舊的 p[0]」就讀錯了。
+r_turn:
+    la   t4, rp                 # t4 = &rp；rp/ro 共 16 bytes = 4 個 word
+    lw   t5, 0(t4)              # 一次搬 4 bytes：rp[0..3] → rtp[0..3]
+    sw   t5, 16(t4)            # rtp 在 rp 後面 16
+    lw   t5, 4(t4)              # rp[4..7]
+    sw   t5, 20(t4)
+    lw   t5, 8(t4)              # ro[0..3]
+    sw   t5, 24(t4)            # rto 在 rp 後面 16 + 8 
+    lw   t5, 12(t4)             # ro[4..7]
+    sw   t5, 28(t4)
+    slli t5, a0, 3            # 第 f 列的起點 = f * 8
+    la   t6, rsrc
+    add  t6, t6, t5             # t6 = &rsrc[f][0]
+    la   a1, rtw
+    add  a1, a1, t5             # a1 = &rtw[f][0]
+    li   a2, 0                  # i = 0
+r_turn_i:
+    add  a3, t6, a2
+    lbu  a3, 0(a3)              # s = src[f][i]
+    add  a3, t4, a3             # a3 = &rp[s]
+    lbu  a4, 16(a3)            # a4 = 舊 p[s] = rtp[s]
+    lbu  a5, 24(a3)            # a5 = 舊 o[s] = rto[s]
+    add  a3, a1, a2
+    lbu  a3, 0(a3)              # a3 = twist[f][i]
+    add  a5, a5, a3             # o + twist（最大 2 + 2 = 4）
+    li   a3, 3
+    blt  a5, a3, r_turn_ok      # < 3
+    addi a5, a5, -3            # mod 3
+r_turn_ok:
+    add  a3, t4, a2             # a3 = &rp[i]
+    sb   a4, 0(a3)              # rp[i] = 舊 p[s]
+    sb   a5, 8(a3)              # ro[i] = 新的方位
+    addi a2, a2, 1
+    li   a3, 7                # 只做第 0..6 格（第 7 格是固定的角，不轉）
+    bne  a2, a3, r_turn_i
+    ret
+
+# r_draw：照 rp/ro 畫出 24 個 facelet（8 個位置 × 3 個 slot）。
+#   迴圈變數放在 a3（e）、a6（k），因為 draw_block 只用 a0..a2、t0..t2，不會弄亂它們。
+r_draw:
+    addi sp, sp, -4
+    sw   ra, 0(sp)              # 要呼叫 draw_block → 先存 ra
+    li   a3, 0                  # e = 0
+r_draw_e:
+    la   t4, rp
+    add  t4, t4, a3
+    lbu  a4, 0(t4)              # c = rp[e]（哪個角塊）
+    lbu  a5, 8(t4)            # o = ro[e]（轉了幾次）
+    li   a6, 0                  # k = 0
+r_draw_k:
+    add  t4, a6, a5             # j = k + o：slot k 顯示角塊的第 j 張貼紙
+    li   t5, 3
+    blt  t4, t5, r_draw_j
+    addi t4, t4, -3             # j mod 3
+r_draw_j:
+    # 顏色 = rcol[c][j]，在 rcol + (c*3 + j) * 4
+    slli t5, a4, 1
+    add  t5, t5, a4            # t5 = c * 3
+    add  t5, t5, t4             # + j
+    slli t5, t5, 2            # × 4（rcol 每個是 1 word）
+    la   t6, rcol
+    add  t5, t5, t6
+    lw   a2, 0(t5)              # a2 = 顏色
+    # 位置 = rxy[e][k]，在 rxy + (e*3 + k) * 2
+    slli t5, a3, 1
+    add  t5, t5, a3             # e * 3
+    add  t5, t5, a6            # + k
+    slli t5, t5, 1            # × 2（每格是 x、y 兩個 byte）
+    la   t6, rxy
+    add  t5, t5, t6
+    lbu  a0, 0(t5)              # a0 = x
+    lbu  a1, 1(t5)            # a1 = y（x 的下一個 byte）
+    jal  ra, draw_block         # 畫這一格
+    addi a6, a6, 1              # 下一個 slot
+    li   t5, 3
+    bne  a6, t5, r_draw_k
+    addi a3, a3, 1              # 下一個位置
+    li   t5, 8               
+    bne  a3, t5, r_draw_e
+    lw   ra, 0(sp)
+    addi sp, sp, 4
+    ret
+
+# draw_block：a0 = x、a1 = y（左上角）、a2 = 顏色；畫 4 寬 × 3 高。
+#   LED (x, y) 的位址 = LED_MATRIX_0_BASE + (y*35 + x) * 4（row-major，M6-1 確認過）。只用 t0..t2。
+draw_block:
+    slli t0, a1, 5            # y * 32
+    slli t1, a1, 1            # y * 2
+    add  t0, t0, t1
+    add  t0, t0, a1            # + y → y * 35
+    add  t0, t0, a0            # + x → 第幾顆 LED
+    slli t0, t0, 2              # × 4 bytes
+    li   t1, LED_MATRIX_0_BASE
+    add  t0, t0, t1             # t0 = &LED(x, y)
+    li   t2, 3                  # 畫 3 列
+db_row:
+    sw   a2, 0(t0)              # 這一列的 4 顆
+    sw   a2, 4(t0)
+    sw   a2, 8(t0)
+    sw   a2, 12(t0)
+    addi t0, t0, 140            # 下一列 = 往後 35 顆 × 4 bytes
+    addi t2, t2, -1
+    bne  t2, x0, db_row
+    ret
+# RENDER-END
 
 #   h_of:  輸入 a1 = p, a2 = o
 #       輸出 a0 = h
